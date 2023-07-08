@@ -1,14 +1,15 @@
 """ .. include::../docs/client.md
 """
 import json
-import warnings
 import logging
 import requests
 
 from typing import Optional
 from pydantic import BaseModel, constr, root_validator
 from requests.adapters import HTTPAdapter
-from types import SimpleNamespace
+
+import aiohttp
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +46,7 @@ class Client(object):
         oidc_token=None,
         versions=None,
         make_request_raise=True,
+        asyncio_loop=None,
     ):
         """Initialize the client. Do this before using other Label Studio SDK classes and methods in your script.
 
@@ -69,7 +71,9 @@ class Client(object):
             Versions of Label Studio components for the connected instance
         make_request_raise: bool
             If true, make_request will raise exceptions on request errors
+        asyncio_loop=None,  TODO write desc
         """
+        self.loop = asyncio_loop if asyncio_loop else asyncio.get_event_loop()
         self.url = url.rstrip('/')
         self.make_request_raise = make_request_raise
         self.session = session or self.get_session()
@@ -94,8 +98,10 @@ class Client(object):
         self.cookies = cookies
 
         # set versions from /version endpoint
-        self.versions = versions if versions else self.get_versions()
-        self.is_enterprise = 'label-studio-enterprise-backend' in self.versions
+        # self.loop.create_task(self.get_versions())
+        self.get_versions()
+        # self.versions = versions if versions else self.loop.create_task(self.get_versions())
+        # self.is_enterprise = 'label-studio-enterprise-backend' in self.versions
 
     def get_versions(self):
         """Call /version api and get all Label Studio component versions
@@ -105,14 +111,15 @@ class Client(object):
         dict with Label Studio component names and their versions
 
         """
-        self.versions = self.make_request('GET', '/api/version').json()
+        self.versions = self.make_sync_request('GET', '/api/version').json()
+        self.is_enterprise = 'label-studio-enterprise-backend' in self.versions
         return self.versions
 
-    def get_api_key(self, credentials: ClientCredentials):
+    async def get_api_key(self, credentials: ClientCredentials):
         login_url = self.get_url("/user/login")
         # Retrieve and set the CSRF token first
-        self.session.get(login_url)
-        csrf_token = self.session.cookies.get('csrftoken', None)
+        await self.session.get(login_url)
+        csrf_token = await self.session.cookies.get('csrftoken', None)
         login_data = dict(**credentials.dict(), csrfmiddlewaretoken=csrf_token)
         self.session.post(
             login_url,
@@ -223,7 +230,7 @@ class Client(object):
         project.start_project(**kwargs)
         return project
 
-    def get_project(self, id):
+    async def get_project(self, id):
         """Return project SDK object by ID existed in Label Studio
 
         Parameters
@@ -238,7 +245,7 @@ class Client(object):
         """
         from .project import Project
 
-        return Project.get_from_id(self, id)
+        return await Project.get_from_id(self, id)
 
     def get_users(self):
         """Return all users from the current organization account
@@ -335,10 +342,12 @@ class Client(object):
         request.Session
 
         """
-        session = requests.Session()
-        session.headers.update(HEADERS)
-        session.mount('http://', HTTPAdapter(max_retries=MAX_RETRIES))
-        session.mount('https://', HTTPAdapter(max_retries=MAX_RETRIES))
+        # session = requests.Session()
+        # TODO set max_retries (explicitly) and timeout
+        session = aiohttp.ClientSession()
+        # session.headers.update(HEADERS)
+        # session.mount('http://', HTTPAdapter(max_retries=MAX_RETRIES))
+        # session.mount('https://', HTTPAdapter(max_retries=MAX_RETRIES))
         return session
 
     def get_url(self, suffix):
@@ -351,7 +360,7 @@ class Client(object):
         """
         return f'{self.url}/{suffix.lstrip("/")}'
 
-    def make_request(self, method, url, *args, **kwargs):
+    def make_sync_request(self, method, url, *args, **kwargs):
         """Make a request with an API key to Label Studio instance
 
         Parameters
@@ -360,6 +369,7 @@ class Client(object):
             HTTP method like POST, PATCH, GET, DELETE.
         url: str
             URL of the API endpoint that you want to make a request to.
+        # TODO docstring
 
         args
             session.request(*args)
@@ -372,36 +382,102 @@ class Client(object):
 
         """
         if 'timeout' not in kwargs:
-            kwargs['timeout'] = TIMEOUT
+            kwargs['timeout'] = TIMEOUT[1]
 
         raise_exceptions = self.make_request_raise
         if 'raise_exceptions' in kwargs:  # kwargs have higher priority
             raise_exceptions = kwargs.pop('raise_exceptions')
 
         logger.debug(f'{method}: {url} with args={args}, kwargs={kwargs}')
-        response = self.session.request(
+        request_url = self.get_url(url)
+        response = requests.request(
             method,
-            self.get_url(url),
+            request_url,
             headers=self.headers,
             cookies=self.cookies,
             *args,
             **kwargs,
         )
-
         if raise_exceptions:
             if response.status_code >= 400:
                 try:
-                    content = json.dumps(json.loads(response.content), indent=2)
-                except:
+                    # content = json.dumps(json.loads(response.content), indent=2)
+                    content = response.json()
+                    return content
+                except Exception:
                     content = response.text
 
                 logger.error(
                     f'\n--------------------------------------------\n'
-                    f'Request URL: {response.url}\n'
-                    f'Response status code: {response.status_code}\n'
+                    f'Request URL: {request_url}\n'
+                    f'Response status code: {response.code}\n'
                     f'Response content:\n{content}\n\n'
                     f'SDK error traceback:')
                 response.raise_for_status()
+
+        return response
+
+    async def make_request(self, method, url, return_type: str = None, *args, **kwargs):
+        """Make a request with an API key to Label Studio instance
+
+        Parameters
+        ----------
+        method: str
+            HTTP method like POST, PATCH, GET, DELETE.
+        url: str
+            URL of the API endpoint that you want to make a request to.
+        # TODO docstring
+
+        args
+            session.request(*args)
+        kwargs
+            session.request(*kwargs)
+
+        Returns
+        -------
+        Response object for the relevant endpoint.
+
+        """
+        if 'timeout' not in kwargs:
+            kwargs['timeout'] = TIMEOUT[1]
+
+        raise_exceptions = self.make_request_raise
+        if 'raise_exceptions' in kwargs:  # kwargs have higher priority
+            raise_exceptions = kwargs.pop('raise_exceptions')
+
+        logger.debug(f'{method}: {url} with args={args}, kwargs={kwargs}')
+        # response = self.session.request(
+        #     method,
+        #     self.get_url(url),
+        #     headers=self.headers,
+        #     cookies=self.cookies,
+        #     *args,
+        #     **kwargs,
+        # )
+        # TODO make it look not like a shit
+        requester = self.session.get if method == 'GET' else self.session.post
+        request_url = self.get_url(url)
+
+        async with requester(request_url, headers=self.headers, cookies=self.cookies, *args, **kwargs) as response:
+            if raise_exceptions:
+                if response.status >= 400:
+                    try:
+                        # content = json.dumps(json.loads(response.content), indent=2)
+                        content = await response.json()
+                        return content
+                    except Exception:
+                        content = response.text
+
+                    logger.error(
+                        f'\n--------------------------------------------\n'
+                        f'Request URL: {request_url}\n'
+                        f'Response status code: {response.code}\n'
+                        f'Response content:\n{content}\n\n'
+                        f'SDK error traceback:')
+                    response.raise_for_status()
+
+            if return_type == 'json':
+                return await response.json()
 
         return response
 
@@ -436,3 +512,6 @@ class Client(object):
             "POST", f"/api/storages/{storage_type}/{str(storage_id)}/sync"
         )
         return response.json()
+
+    async def close(self):
+        await self.session.close()

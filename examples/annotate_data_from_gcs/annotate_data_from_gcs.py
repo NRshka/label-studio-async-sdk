@@ -1,7 +1,7 @@
 import os
 
 from google.cloud import storage as google_storage
-from label_studio_sdk import Client
+from label_studio_async_sdk import Client
 
 BUCKET_NAME = 'my-bucket'  # specify your bucket name here
 GOOGLE_APPLICATION_CREDENTIALS = (

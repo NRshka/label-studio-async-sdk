@@ -1,7 +1,7 @@
 from evalme.metrics import (
     get_agreement,
 )  # run first `pip install label-studio-evalme` to use this package
-from label_studio_sdk import Client
+from label_studio_async_sdk import Client
 import pandas as pd
 
 LABEL_STUDIO_URL = 'http://localhost:8080'

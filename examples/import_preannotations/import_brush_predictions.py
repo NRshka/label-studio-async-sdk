@@ -4,7 +4,7 @@
 
 import numpy as np
 import label_studio_converter.brush as brush
-from label_studio_sdk import Client
+from label_studio_async_sdk import Client
 
 LABEL_STUDIO_URL = 'http://localhost:8080'
 LABEL_STUDIO_API_KEY = '<your-token>'

@@ -1,7 +1,7 @@
 import random
 import re
 
-from label_studio_sdk import Client
+from label_studio_async_sdk import Client
 import pandas as pd
 
 ls = Client(

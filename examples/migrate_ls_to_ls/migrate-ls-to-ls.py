@@ -8,9 +8,9 @@ import time
 import json
 import logging
 
-from label_studio_sdk import Client
-from label_studio_sdk.project import Project
-from label_studio_sdk.users import User
+from label_studio_async_sdk import Client
+from label_studio_async_sdk.project import Project
+from label_studio_async_sdk.users import User
 
 logger = logging.getLogger('migration-ls-to-ls')
 

@@ -15,14 +15,14 @@ Demo video:
 """
 import time
 import math
-import label_studio_sdk
+import label_studio_async_sdk
 
-from label_studio_sdk.data_manager import Filters, Column, Operator, Type
+from label_studio_async_sdk.data_manager import Filters, Column, Operator, Type
 
 
 class BatchAssigner:
     def __init__(self, host, api_key, project_id):
-        self.ls = label_studio_sdk.Client(url=host, api_key=api_key)
+        self.ls = label_studio_async_sdk.Client(url=host, api_key=api_key)
         self.project = self.ls.get_project(id=project_id)
 
     def get_tasks(self, filter_column, filter_value, page, page_size):

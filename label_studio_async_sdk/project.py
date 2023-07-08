@@ -1,5 +1,6 @@
 """ .. include::../docs/project.md
 """
+import asyncio
 import os
 import json
 import logging
@@ -292,7 +293,7 @@ class Project(Client):
                 )
         return self.params[param_name]
 
-    def get_params(self):
+    async def get_params(self):
         """Get all available project parameters.
 
         Returns
@@ -354,8 +355,8 @@ class Project(Client):
             Retrieve and display predictions when loading a task
 
         """
-        response = self.make_request('GET', f'/api/projects/{self.id}')
-        return response.json()
+        response = await self.make_request('GET', f'/api/projects/{self.id}', return_type='json')
+        return response
 
     def get_model_versions(self):
         """Get the list of available ML model versions from pre-annotations or connected ML backends.
@@ -369,9 +370,9 @@ class Project(Client):
         response = self.make_request('GET', f'/api/projects/{self.id}/model-versions')
         return response.json()
 
-    def update_params(self):
+    async def update_params(self):
         """Get [all available project parameters](#label_studio_sdk.project.Project.get_params) and cache them."""
-        self.params = self.get_params()
+        self.params = await self.get_params()
 
     def start_project(self, **kwargs):
         """Create a new labeling project in Label Studio.
@@ -457,7 +458,7 @@ class Project(Client):
         return project
 
     @classmethod
-    def get_from_id(cls, client, project_id) -> "Project":
+    async def get_from_id(cls, client, project_id) -> "Project":
         """Class factory to create a project instance from an existing project ID.
 
         Parameters
@@ -471,7 +472,8 @@ class Project(Client):
         `Project`
         """
         project = cls._create_from_id(client, project_id)
-        project.update_params()
+        project.loop = client.loop
+        await project.update_params()
         return project
 
     def import_tasks(self, tasks, preannotated_from_fields: List = None):
@@ -651,7 +653,7 @@ class Project(Client):
         """
         self.set_params(model_version=model_version)
 
-    def get_tasks(
+    async def get_tasks(
         self,
         filters=None,
         ordering=None,
@@ -704,7 +706,7 @@ class Project(Client):
         result = []
         while True:
             try:
-                data = self.get_paginated_tasks(
+                data = await self.get_paginated_tasks(
                     filters=filters,
                     ordering=ordering,
                     view_id=view_id,
@@ -721,7 +723,7 @@ class Project(Client):
                 break
         return result
 
-    def get_paginated_tasks(
+    async def get_paginated_tasks(
         self,
         filters=None,
         ordering=None,
@@ -806,30 +808,34 @@ class Project(Client):
             'project': self.id,
             'page': page,
             'page_size': page_size,
-            'view': view_id,
+            # 'view': view_id,
             'query': json.dumps(query),
             'fields': 'all',
-            'resolve_uri': resolve_uri,
+            'resolve_uri': str(resolve_uri),
         }
         if only_ids:
             params['include'] = 'id'
+        if view_id is not None:
+            params['view'] = view_id
 
         try:
-            response = self.make_request('GET', '/api/tasks', params)
+            data = await self.make_request('GET', '/api/tasks', 'json', params=params)
         except HTTPError as e:
             raise LabelStudioException(f'Error loading tasks: {e}')
 
-        data = response.json()
+        if data.get('status_code') == 404:
+            raise LabelStudioException('No tasks found')
+
         tasks = data['tasks']
         if only_ids:
             data['tasks'] = [task['id'] for task in tasks]
 
         return data
 
-    def get_tasks_ids(self, *args, **kwargs):
+    async def get_tasks_ids(self, *args, **kwargs):
         """Same as `label_studio_sdk.project.Project.get_tasks()` but returns only task IDs."""
         kwargs['only_ids'] = True
-        return self.get_tasks(*args, **kwargs)
+        return await self.get_tasks(*args, **kwargs)
 
     def get_paginated_tasks_ids(self, *args, **kwargs):
         """Same as `label_studio_sdk.project.Project.get_paginated_tasks()` but returns

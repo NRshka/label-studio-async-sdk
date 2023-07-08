@@ -1,6 +1,6 @@
 import os
 import time
-from label_studio_sdk import Client
+from label_studio_async_sdk import Client
 
 LABEL_STUDIO_URL = os.getenv('LABEL_STUDIO_URL', default='http://localhost:8080')
 API_KEY = os.getenv('LABEL_STUDIO_API_KEY')
