@@ -1,6 +1,5 @@
 """ .. include::../docs/client.md
 """
-import json
 import logging
 import requests
 
@@ -471,7 +470,7 @@ class Client(object):
                     logger.error(
                         f'\n--------------------------------------------\n'
                         f'Request URL: {request_url}\n'
-                        f'Response status code: {response.code}\n'
+                        f'Response status code: {response.status}\n'
                         f'Response content:\n{content}\n\n'
                         f'SDK error traceback:')
                     response.raise_for_status()

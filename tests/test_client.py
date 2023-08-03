@@ -10,7 +10,7 @@ def test_client_headers():
         mocked_get.return_value.status_code = 200
         client.check_connection()
         args, kwargs = mocked_get.call_args
-        assert kwargs['headers'] == {'Authorization': f'Token fake_key', 'Proxy-Authorization': 'Bearer fake_bearer'}
+        assert kwargs['headers'] == {'Authorization': 'Token fake_key', 'Proxy-Authorization': 'Bearer fake_bearer'}
 
 
 def test_client_no_extra_headers():
@@ -19,4 +19,4 @@ def test_client_no_extra_headers():
         mocked_get.return_value.status_code = 200
         client.check_connection()
         args, kwargs = mocked_get.call_args
-        assert kwargs['headers'] == {'Authorization': f'Token fake_key'}
+        assert kwargs['headers'] == {'Authorization': 'Token fake_key'}

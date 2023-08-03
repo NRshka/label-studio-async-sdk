@@ -42,8 +42,7 @@ def parse_config(config_string):
 
     """
     """
-    :param config_string: 
-    
+    :param config_string:
     """
     if not config_string:
         return {}
@@ -129,4 +128,4 @@ def parse_config(config_string):
 def chunk(lst, n):
     """Yield successive n-sized chunks from lst."""
     for i in range(0, len(lst), n):
-        yield lst[i : i + n]
+        yield lst[i: i + n]

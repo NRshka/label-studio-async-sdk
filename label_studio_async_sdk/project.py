@@ -12,9 +12,10 @@ from random import sample, shuffle
 from requests.exceptions import HTTPError, InvalidSchema, MissingSchema
 from requests import Response
 from pathlib import Path
-from typing import Optional, Union, List, Dict, Callable
+from typing import Optional, Tuple, Union, List, Dict, Callable
 from .client import Client
-from .utils import parse_config, chunk
+# from .utils import parse_config, chunk
+from .utils import chunk as chunkize
 
 from label_studio_tools.core.utils.io import get_local_path
 from label_studio_tools.core.label_config import parse_config
@@ -116,7 +117,7 @@ class Project(Client):
         self.params = {}
 
     def __getattr__(self, item):
-        return self._get_param(item)
+        return asyncio.create_task(self._get_param(item))
 
     @property
     def parsed_label_config(self):
@@ -144,7 +145,7 @@ class Project(Client):
         """
         return parse_config(self.label_config)
 
-    def get_members(self):
+    async def get_members(self):
         """Get members from this project.
 
         Parameters
@@ -162,14 +163,14 @@ class Project(Client):
             "Use get_users() instead."
         )
 
-        response = self.make_request('GET', f'/api/projects/{self.id}/members')
+        response = await self.make_request('GET', f'/api/projects/{self.id}/members', return_type='json')
         users = []
-        for user_data in response.json():
+        for user_data in response:
             user_data['client'] = self
             users.append(User(**user_data))
         return users
 
-    def add_member(self, user):
+    async def add_member(self, user):
         """Add a user to a project.
 
         Parameters
@@ -183,12 +184,12 @@ class Project(Client):
 
         """
         payload = {'user': user.id}
-        response = self.make_request(
-            'POST', f'/api/projects/{self.id}/members', json=payload
+        response = await self.make_request(
+            'POST', f'/api/projects/{self.id}/members', json=payload, return_type='json'
         )
-        return response.json()
+        return response
 
-    def assign_annotators(self, users, tasks_ids):
+    async def assign_annotators(self, users, tasks_ids):
         """Assign annotators to tasks
 
         Parameters
@@ -205,20 +206,20 @@ class Project(Client):
         final_response = {'assignments': 0}
         users_ids = [user.id for user in users]
         # Assign tasks to users with batches
-        for c in chunk(tasks_ids, 1000):
+        for c in chunkize(tasks_ids, 1000):
             logger.debug(f"Starting assignment for: {users_ids}")
             payload = {
                 'users': users_ids,
                 'selectedItems': {'all': False, 'included': c},
                 'type': 'AN',
             }
-            response = self.make_request(
-                'POST', f'/api/projects/{self.id}/tasks/assignees', json=payload
+            response = await self.make_request(
+                'POST', f'/api/projects/{self.id}/tasks/assignees', json=payload, return_type='json'
             )
             final_response['assignments'] += response.json()['assignments']
         return final_response
 
-    def delete_annotators_assignment(self, tasks_ids):
+    async def delete_annotators_assignment(self, tasks_ids):
         """Remove all assigned annotators for tasks
 
         Parameters
@@ -232,10 +233,11 @@ class Project(Client):
 
         """
         payload = {'selectedItems': {'all': False, 'included': tasks_ids}}
-        response = self.make_request(
+        response = await self.make_request(
             'POST',
             f'/api/dm/actions?id=delete_annotators&project={self.id}',
             json=payload,
+            return_type='json',
         )
         return response.json()
 
@@ -284,9 +286,9 @@ class Project(Client):
         )
         return response.json()
 
-    def _get_param(self, param_name):
+    async def _get_param(self, param_name):
         if param_name not in self.params:
-            self.update_params()
+            await self.update_params()
             if param_name not in self.params:
                 raise LabelStudioAttributeError(
                     f'Project "{param_name}" field is not set'
@@ -355,7 +357,8 @@ class Project(Client):
             Retrieve and display predictions when loading a task
 
         """
-        response = await self.make_request('GET', f'/api/projects/{self.id}', return_type='json')
+        current_project_id = await self.id
+        response = await self.make_request('GET', f'/api/projects/{current_project_id}', return_type='json')
         return response
 
     def get_model_versions(self):
@@ -476,7 +479,7 @@ class Project(Client):
         await project.update_params()
         return project
 
-    def import_tasks(self, tasks, preannotated_from_fields: List = None):
+    async def import_tasks(self, tasks, preannotated_from_fields: List = None):
         """Import JSON-formatted labeling tasks. Tasks can be unlabeled or contain predictions.
 
         Parameters
@@ -500,9 +503,10 @@ class Project(Client):
         if preannotated_from_fields:
             params['preannotated_from_fields'] = ','.join(preannotated_from_fields)
         if isinstance(tasks, (list, dict)):
-            response = self.make_request(
+            response = await self.make_request(
                 method='POST',
                 url=f'/api/projects/{self.id}/import',
+                return_type='json',
                 json=tasks,
                 params=params,
             )
@@ -514,6 +518,7 @@ class Project(Client):
                 response = self.make_request(
                     method='POST',
                     url=f'/api/projects/{self.id}/import',
+                    return_type='json',
                     files={'file': f},
                     params=params,
                 )
@@ -521,7 +526,7 @@ class Project(Client):
             raise TypeError(
                 f'Not supported type provided as "tasks" argument: {type(tasks)}'
             )
-        response = response.json()
+        response = response
 
         if 'import' in response:
             # check import status
@@ -534,7 +539,8 @@ class Project(Client):
                 import_status = self.make_request(
                     method='GET',
                     url=f'/api/projects/{self.id}/imports/{response["import"]}',
-                ).json()
+                    return_type='json',
+                )
 
                 if import_status['status'] == 'completed':
                     return import_status['task_ids']
@@ -553,7 +559,7 @@ class Project(Client):
 
         return response['task_ids']
 
-    def export_tasks(
+    async def export_tasks(
         self,
         export_type: str = 'JSON',
         download_all_tasks: bool = False,
@@ -598,14 +604,15 @@ class Project(Client):
         }
         if ids:
             params['ids'] = ids
-        response = self.make_request(
-            method='GET', url=f'/api/projects/{self.id}/export', params=params
-        )
         if export_location is None:
             if 'JSON' not in export_type.upper():
                 raise ValueError(
                     f'{export_type} export type requires an export location to be specified'
                 )
+            response = await self.make_request(
+                method='GET', url=f'/api/projects/{self.id}/export', params=params,
+                return_type='json',
+            )
             return response.json()
 
         export_path = pathlib.Path(export_location)
@@ -804,8 +811,9 @@ class Project(Client):
             if selected_ids
             else {'all': True, "excluded": []},
         }
+        current_projecet_id = await self.id
         params = {
-            'project': self.id,
+            'project': current_projecet_id,
             'page': page,
             'page_size': page_size,
             # 'view': view_id,
@@ -893,14 +901,14 @@ class Project(Client):
         return response.json()
 
     @property
-    def tasks(self):
+    async def tasks(self):
         """Retrieve all tasks from the project. This call can be very slow if the project has a lot of tasks."""
-        return self.get_tasks()
+        return await self.get_tasks()
 
     @property
-    def tasks_ids(self):
+    async def tasks_ids(self):
         """IDs for all tasks for a project. This call can be very slow if the project has lots of tasks."""
-        return self.get_tasks_ids()
+        return await self.get_tasks_ids()
 
     def get_labeled_tasks(self, only_ids=False):
         """Retrieve all tasks that have been completed, i.e. where requested number of annotations have been created
@@ -1048,7 +1056,7 @@ class Project(Client):
         response.raise_for_status()
         return response.json()
 
-    def create_prediction(
+    async def create_prediction(
         self,
         task_id: int,
         result: Optional[Union[List[Dict], Dict, str]] = None,
@@ -1101,10 +1109,10 @@ class Project(Client):
         data = {'task': task_id, 'result': result, 'score': score}
         if model_version is not None:
             data['model_version'] = model_version
-        response = self.make_request('POST', '/api/predictions', json=data)
-        return response.json()
+        response = await self.make_request('POST', '/api/predictions', json=data, return_type='json')
+        return response
 
-    def create_predictions(self, predictions):
+    async def create_predictions(self, predictions):
         """Bulk create predictions for tasks. See <a href="https://labelstud.io/guide/predictions.html">more
         details about pre-annotated tasks</a>.
 
@@ -1114,12 +1122,13 @@ class Project(Client):
             List of dicts with predictions in the <a href="https://labelstud.io/guide/export.html#Label-Studio-JSON-format-of-annotated-tasks">
             Label Studio JSON format as for annotations</a>.
         """
-        response = self.make_request(
-            'POST', f'/api/projects/{self.id}/import/predictions', json=predictions
+        response = await self.make_request(
+            'POST', f'/api/projects/{self.id}/import/predictions', json=predictions,
+            return_type='json',
         )
-        return response.json()
+        return response
 
-    def create_annotations_from_predictions(self, model_versions=None):
+    async def create_annotations_from_predictions(self, model_versions=None):
         """Create annotations from all predictions that exist for project tasks from specific ML model versions.
 
         Parameters
@@ -1145,10 +1154,11 @@ class Project(Client):
             '/api/dm/actions',
             params={'id': 'predictions_to_annotations', 'project': self.id},
             json=payload,
+            return_type='json',
         )
-        return response.json()
+        return response
 
-    def create_annotation(self, task_id: int, **kwargs) -> Dict:
+    async def create_annotation(self, task_id: int, **kwargs) -> Dict:
         """Add annotations to a task like an annotator does.
 
         Parameters
@@ -1166,10 +1176,10 @@ class Project(Client):
 
         """
         response = self.make_request(
-            'POST', f'/api/tasks/{task_id}/annotations/', json=kwargs
+            'POST', f'/api/tasks/{task_id}/annotations/', json=kwargs, return_type='json',
         )
-        response.raise_for_status()
-        return response.json()
+        # response.raise_for_status()
+        return response
 
     def update_annotation(self, annotation_id, **kwargs):
         """Update specific annotation with new annotation parameters, e.g.
@@ -1640,7 +1650,7 @@ class Project(Client):
 
     def connect_local_import_storage(
         self,
-        local_store_path: [str],
+        local_store_path: List[str],
         regex_filter: Optional[str] = None,
         use_blob_urls: Optional[bool] = True,
         title: Optional[str] = '',
@@ -1999,7 +2009,7 @@ class Project(Client):
 
     def export_snapshot_download(
         self, export_id: int, export_type: str = 'JSON', path: str = "."
-    ) -> (int, str):
+    ) -> Tuple[int, str]:
         """
         Download file with export snapshot in provided format
         ----------
@@ -2113,7 +2123,7 @@ class Project(Client):
             "POST", f"/api/dm/actions?project={self.id}&id=delete_tasks", json=payload
         )
 
-    def delete_all_tasks(self, excluded_ids: list = None) -> Response:
+    async def delete_all_tasks(self, excluded_ids: list = None) -> Response:
         """Delete all tasks from the project.
 
         Parameters
@@ -2126,10 +2136,11 @@ class Project(Client):
         ), 'excluded_ids should be list of int or None'
         if excluded_ids is None:
             excluded_ids = []
+        current_project_id = await self.id
         payload = {
             "selectedItems": {"all": True, "excluded": excluded_ids},
-            "project": self.id,
+            "project": current_project_id,
         }
-        return self.make_request(
-            "POST", f"/api/dm/actions?project={self.id}&id=delete_tasks", json=payload
+        return await self.make_request(
+            "POST", f"/api/dm/actions?project={current_project_id}&id=delete_tasks", json=payload, return_type='json',
         )
